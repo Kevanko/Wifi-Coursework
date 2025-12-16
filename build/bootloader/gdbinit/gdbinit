@@ -1,0 +1,2 @@
+source /home/nm/Study/esp32s3/1w_ds18b20/build/bootloader/gdbinit/symbols
+source /home/nm/Study/esp32s3/1w_ds18b20/build/bootloader/gdbinit/connect
