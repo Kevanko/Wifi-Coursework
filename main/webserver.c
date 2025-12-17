@@ -10,6 +10,8 @@
 #include "esp_http_server.h"
 #include "cJSON.h"
 #include "freertos/semphr.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 static const char *TAG = "WEB";
 
@@ -23,7 +25,35 @@ extern const uint8_t _binary_style_css_gz_end[];
 extern const uint8_t _binary_script_js_gz_start[];
 extern const uint8_t _binary_script_js_gz_end[];
 
+// --- NVS helpers ---
+static void save_thresholds(void)
+{
+    nvs_handle_t handle;
+    if (nvs_open("storage", NVS_READWRITE, &handle) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open NVS");
+        return;
+    }
+    nvs_set_blob(handle, "thresholds", g_settings.thresholds, sizeof(g_settings.thresholds));
+    nvs_commit(handle);
+    nvs_close(handle);
+}
 
+static void load_thresholds(void)
+{
+    nvs_handle_t handle;
+    if (nvs_open("storage", NVS_READONLY, &handle) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open NVS");
+        return;
+    }
+    size_t size = sizeof(g_settings.thresholds);
+    esp_err_t err = nvs_get_blob(handle, "thresholds", g_settings.thresholds, &size);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "No saved thresholds, using defaults");
+    }
+    nvs_close(handle);
+}
+
+// --- Web handlers ---
 static esp_err_t send_gzip_asset(httpd_req_t *req, const uint8_t *start, const uint8_t *end, const char *content_type)
 {
     size_t size = (size_t)(end - start);
@@ -43,24 +73,11 @@ static esp_err_t send_gzip_asset(httpd_req_t *req, const uint8_t *start, const u
         httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000");
     }
 
-    esp_err_t err = httpd_resp_send(req, (const char *)start, size);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_resp_send failed: %s", esp_err_to_name(err));
-    }
-    return err;
+    return httpd_resp_send(req, (const char *)start, size);
 }
 
 static esp_err_t root_handler(httpd_req_t* req) {
-  const uint8_t* data = _binary_page_html_gz_start;
-  size_t size = _binary_page_html_gz_end - _binary_page_html_gz_start;
-  httpd_resp_set_type(req, "text/html; charset=utf-8");
-  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-  httpd_resp_set_hdr(req, "Cache-Control",
-                     "no-cache, no-store, must-revalidate");
-  httpd_resp_set_hdr(req, "Pragma", "no-cache");
-  httpd_resp_set_hdr(req, "Expires", "0");
-  httpd_resp_send(req, (const char*)data, size);
-  return ESP_OK;
+    return send_gzip_asset(req, _binary_page_html_gz_start, _binary_page_html_gz_end, "text/html; charset=utf-8");
 }
 
 static esp_err_t api_data_get_handler(httpd_req_t *req)
@@ -74,19 +91,11 @@ static esp_err_t api_data_get_handler(httpd_req_t *req)
     if (xSemaphoreTake(settings_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
         cJSON_AddNumberToObject(root, "temp", current_temperature);
         cJSON *limits = cJSON_CreateArray();
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 5; ++i)
             cJSON_AddItemToArray(limits, cJSON_CreateNumber(g_settings.thresholds[i]));
-        }
         cJSON_AddItemToObject(root, "limits", limits);
         xSemaphoreGive(settings_mutex);
     } else {
-        // fallback: still try to return something
-        cJSON_AddNumberToObject(root, "temp", current_temperature);
-        cJSON *limits = cJSON_CreateArray();
-        for (int i = 0; i < 5; ++i) {
-            cJSON_AddItemToArray(limits, cJSON_CreateNumber(g_settings.thresholds[i]));
-        }
-        cJSON_AddItemToObject(root, "limits", limits);
         ESP_LOGW(TAG, "api_data: mutex timeout");
     }
 
@@ -108,139 +117,66 @@ static esp_err_t api_data_get_handler(httpd_req_t *req)
 static esp_err_t api_settings_post_handler(httpd_req_t *req)
 {
     int remaining = req->content_len;
-    if (remaining <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad Request");
-        return ESP_FAIL;
-    }
-    const int MAX_PAYLOAD = 1024;
-    if (remaining > MAX_PAYLOAD) {
-        ESP_LOGW(TAG, "Payload too large: %d", remaining);
-        httpd_resp_send_err(req, HTTPD_413_CONTENT_TOO_LARGE, "Payload too large");
-        return ESP_FAIL;
-    }
+    if (remaining <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad Request");
 
     char *buf = malloc(remaining + 1);
-    if (!buf) {
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
+    if (!buf) return httpd_resp_send_500(req);
 
-    int to_read = remaining;
-    int total = 0;
+    int total = 0, to_read = remaining;
     while (to_read > 0) {
         int r = httpd_req_recv(req, buf + total, to_read);
-        if (r <= 0) {
-            free(buf);
-            httpd_resp_send_500(req);
-            return ESP_FAIL;
-        }
-        total += r;
-        to_read -= r;
+        if (r <= 0) { free(buf); return httpd_resp_send_500(req); }
+        total += r; to_read -= r;
     }
     buf[total] = '\0';
 
     cJSON *root = cJSON_Parse(buf);
     free(buf);
-    if (!root) {
-        ESP_LOGW(TAG, "JSON parse error");
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad Request");
-        return ESP_FAIL;
-    }
+    if (!root) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad Request");
 
     cJSON *limits = cJSON_GetObjectItem(root, "limits");
     if (!limits || !cJSON_IsArray(limits) || cJSON_GetArraySize(limits) != 5) {
         cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad Request");
-        return ESP_FAIL;
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad Request");
     }
 
     if (xSemaphoreTake(settings_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
         for (int i = 0; i < 5; ++i) {
             cJSON *it = cJSON_GetArrayItem(limits, i);
-            if (it && cJSON_IsNumber(it)) {
-                g_settings.thresholds[i] = (float)it->valuedouble;
-            }
+            if (it && cJSON_IsNumber(it)) g_settings.thresholds[i] = (float)it->valuedouble;
         }
+        save_thresholds();  // <-- сохраняем в NVS
         xSemaphoreGive(settings_mutex);
     } else {
-        ESP_LOGW(TAG, "settings_post: mutex timeout; ignoring update");
         cJSON_Delete(root);
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
+        return httpd_resp_send_500(req);
     }
 
     cJSON_Delete(root);
-    httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-static esp_err_t css_handler(httpd_req_t *req)
-{
-    return send_gzip_asset(req,
-                           _binary_style_css_gz_start,
-                           _binary_style_css_gz_end,
-                           "text/css");
+    return httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
 }
 
-static esp_err_t js_handler(httpd_req_t *req)
-{
-    return send_gzip_asset(req,
-                           _binary_script_js_gz_start,
-                           _binary_script_js_gz_end,
-                           "application/javascript");
-}
-
+static esp_err_t css_handler(httpd_req_t *req) { return send_gzip_asset(req, _binary_style_css_gz_start, _binary_style_css_gz_end, "text/css"); }
+static esp_err_t js_handler(httpd_req_t *req)  { return send_gzip_asset(req, _binary_script_js_gz_start, _binary_script_js_gz_end, "application/javascript"); }
 
 void start_webserver(void)
 {
+    load_thresholds(); // <-- загружаем настройки при старте
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 10;
 
     httpd_handle_t server = NULL;
-    esp_err_t rc = httpd_start(&server, &config);
-    if (rc != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(rc));
+    if (httpd_start(&server, &config) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server");
         return;
     }
 
-    httpd_uri_t root = {
-        .uri = "/",
-        .method = HTTP_GET,
-        .handler = root_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(server, &root);
-
-    httpd_uri_t css = {
-        .uri = "/style.css",
-        .method = HTTP_GET,
-        .handler = css_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(server, &css);
-
-    httpd_uri_t js = {
-        .uri = "/script.js",
-        .method = HTTP_GET,
-        .handler = js_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(server, &js);
-
-    httpd_uri_t api_data = {
-        .uri = "/api/data",
-        .method = HTTP_GET,
-        .handler = api_data_get_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(server, &api_data);
-
-    httpd_uri_t api_set = {
-        .uri = "/api/settings",
-        .method = HTTP_POST,
-        .handler = api_settings_post_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(server, &api_set);
+    httpd_register_uri_handler(server, &(httpd_uri_t){"/", HTTP_GET, root_handler, NULL});
+    httpd_register_uri_handler(server, &(httpd_uri_t){"/style.css", HTTP_GET, css_handler, NULL});
+    httpd_register_uri_handler(server, &(httpd_uri_t){"/script.js", HTTP_GET, js_handler, NULL});
+    httpd_register_uri_handler(server, &(httpd_uri_t){"/api/data", HTTP_GET, api_data_get_handler, NULL});
+    httpd_register_uri_handler(server, &(httpd_uri_t){"/api/settings", HTTP_POST, api_settings_post_handler, NULL});
 
     ESP_LOGI(TAG, "HTTP server started");
 }

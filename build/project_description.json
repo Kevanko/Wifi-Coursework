@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "1w_ds18b20",
-    "project_version":    "93b996a-dirty",
+    "project_version":    "46133c3-dirty",
     "project_path":       "/home/nm/Study/esp32s3/1w_ds18b20",
     "idf_path":           "/home/nm/esp/v5.5.1/esp-idf",
     "build_dir":          "/home/nm/Study/esp32s3/1w_ds18b20/build",
