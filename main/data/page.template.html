@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang='ru'>
+<head>
+<meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>ESP32 Термостат</title>
+<link rel="stylesheet" href="style.css?v=__STYLE_HASH__" />
+<script src="script.js?v=__SCRIPT_HASH__" defer></script>
+</head>
+<body>
+<div class='card'>
+<h1>Панель Управления</h1>
+<div class='temp-box' id='currTemp'>--.- °C</div>
+<form id='settingsForm'>
+    <div class='control-group'><div style='display:flex;align-items:center'><span class='led-indicator' style='background:blue'></span>Синий (> T)</div><input type='number' step='0.1' id='t0'></div>
+    <div class='control-group'><div style='display:flex;align-items:center'><span class='led-indicator' style='background:green'></span>Зеленый (> T)</div><input type='number' step='0.1' id='t1'></div>
+    <div class='control-group'><div style='display:flex;align-items:center'><span class='led-indicator' style='background:yellow'></span>Желтый (> T)</div><input type='number' step='0.1' id='t2'></div>
+    <div class='control-group'><div style='display:flex;align-items:center'><span class='led-indicator' style='background:orange'></span>Оранж (> T)</div><input type='number' step='0.1' id='t3'></div>
+    <div class='control-group'><div style='display:flex;align-items:center'><span class='led-indicator' style='background:red'></span>Красный (> T)</div><input type='number' step='0.1' id='t4'></div>
+    <button type='button' onclick='sendData()'>Применить настройки</button>
+</form>
+</div>
+</body>
+</html>
