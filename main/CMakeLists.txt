@@ -27,7 +27,7 @@ add_custom_target(gzip_assets ALL
     COMMAND ${CMAKE_COMMAND} -E echo "Building web assets (gzip + hashes)"
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/gzip_assets.py"
     DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/data/page.template.html"
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/page.html"
         "${CMAKE_CURRENT_SOURCE_DIR}/data/style.css"
         "${CMAKE_CURRENT_SOURCE_DIR}/data/script.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/gzip_assets.py"

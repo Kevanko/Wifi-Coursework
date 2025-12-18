@@ -1,41 +1,46 @@
 function updateData() {
     fetch('/api/data')
-        .then(response => response.json())
+        .then(res => res.json())
         .then(data => {
-            // 1. Обновляем температуру
-            document.getElementById('currTemp').innerText = data.temp.toFixed(1) + ' °C';
-            
-            // 2. Обновляем поля настроек только при первой загрузке
-            // Проверяем t0, чтобы избежать затирания введенных пользователем данных
-            if(document.getElementById('t0').value === '') {
-                for(let i=0; i<5; i++) {
-                    document.getElementById('t'+i).value = data.limits[i].toFixed(1);
+            const currTempDiv = document.getElementById('currTemp');
+            currTempDiv.innerText = data.temp.toFixed(1) + ' °C';
+            let color = '#03dac6';
+            for (let i = 4; i >= 0; i--) {
+                if (data.temp >= data.limits[i]) {
+                    const led = document.getElementById('t'+i).previousElementSibling.querySelector('.led-indicator');
+                    color = led.style.background;
+                    break;
                 }
             }
+            currTempDiv.style.color = color;
+            if(document.getElementById('t0').value === '') {
+                for(let i=0; i<5; i++)
+                    document.getElementById('t'+i).value = data.limits[i].toFixed(1);
+            }
         })
-        .catch(error => { console.error('Ошибка GET данных:', error); });
+        .catch(err => console.error(err));
 }
+
+
+
 
 function sendData() {
     let payload = { limits: [] };
     
-    // Собираем данные из полей ввода
     for(let i=0; i<5; i++) {
-        // Парсим в float
         payload.limits.push(parseFloat(document.getElementById('t'+i).value));
     }
     
     fetch('/api/settings', {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json' // Важно для ESP32
+            'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
     })
     .then(res => { 
         if(res.ok) {
             alert('Настройки сохранены!'); 
-            // Принудительно запускаем обновление, чтобы поля не опустели
             updateData(); 
         } else {
             alert('Ошибка сервера! Код: ' + res.status); 
@@ -47,8 +52,7 @@ function sendData() {
     });
 }
 
-// Запуск при загрузке страницы и каждые 2 секунды
 document.addEventListener('DOMContentLoaded', () => {
-    setInterval(updateData, 2000); 
+    setInterval(updateData, 1200); 
     updateData();
 });

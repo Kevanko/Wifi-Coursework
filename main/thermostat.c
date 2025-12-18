@@ -129,7 +129,7 @@ void thermostat_task(void *pvParameters)
                 continue;
             }
 
-            vTaskDelay(pdMS_TO_TICKS(800)); // wait conversion (12-bit worst-case ~750ms)
+            vTaskDelay(pdMS_TO_TICKS(750)); // wait conversion (12-bit worst-case ~750ms)
 
             float temp = 0.0f;
             if (ds18b20_get_temperature(sensor, &temp) == ESP_OK) {
@@ -149,6 +149,6 @@ void thermostat_task(void *pvParameters)
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
